@@ -2,9 +2,9 @@
 
 4人打ちリーチ麻雀の公開牌配置と打牌候補から、放銃しやすさを推定する軽量な危険度評価器。
 
-[cjong4](https://github.com/sh-lab/cjong4) が生成するマスク済みプレイヤービューを利用し、打牌候補ごとに `0..255` の危険度スコアを返します。スマートフォンとWebブラウザへの組み込みを対象とします。
+[cjong4](https://github.com/sh-lab/cjong4) が生成するマスク済みプレイヤービューを利用し、打牌候補ごとに `0..255` の危険度スコアを返すことを目指します。スマートフォンとWebブラウザへの組み込みを対象とします。
 
-現在は仕様検討段階です。このリポジトリには、推論器・学習器・学習済みモデルはまだありません。
+初期実装として、入力生成・正規化・検証のC11ライブラリとテストを提供しています。推論器・学習器・学習済みモデルはまだなく、危険度スコアは出力しません。
 
 ## 目的
 
@@ -36,7 +36,7 @@
 
 ## 入力仕様
 
-受け渡し用の入力は414バイトです。C構造体を直接保存せず、各フィールドを明示的に直列化します。
+受け渡し用の入力は414バイトです。C構造体を直接保存せず、各フィールドを明示的に直列化します。現在の形式は `CJ4DR_INPUT_SCHEMA_VERSION == 1` です。414バイト内にバージョン番号は含めず、保存・通信時には呼び出し側が別途記録してください。
 
 | 入力 | サイズ |
 | --- | ---: |
@@ -47,13 +47,15 @@
 
 ### 牌配置
 
-`cj4_player_view.locations` から `wall` 以外の3フィールドを使用します。
+`cj4_player_view.locations` から `wall` 以外の3フィールドを使用します。`discard` と `placement` のプレイヤー番号を相対化してから格納します。
 
 ```c
-input[tile_id * 3 + 0] = locations[tile_id].discard;
-input[tile_id * 3 + 1] = locations[tile_id].placement;
+input[tile_id * 3 + 0] = relative_owner(locations[tile_id].discard, view.player);
+input[tile_id * 3 + 1] = relative_owner(locations[tile_id].placement, view.player);
 input[tile_id * 3 + 2] = locations[tile_id].discard_history;
 ```
+
+上記の `relative_owner` は説明用の疑似関数です。`255` はそのまま保持し、有効な配置のプレイヤービットだけを `(元の番号 - view.player + 4) % 4` に変換します。自分は常に0になります。捨牌順、ツモ切りフラグ、副露グループ・種類、全体の捨牌順、リーチ宣言フラグは保持します。鳴かれた牌も、元の捨牌情報と現在の副露情報の両方を残します。
 
 完全状態の牌配置は推論入力に使いません。cjong4が対象プレイヤー向けにマスクした情報を使用します。
 
@@ -62,7 +64,7 @@ input[tile_id * 3 + 2] = locations[tile_id].discard_history;
 ### ドラ表示牌
 
 ```c
-input[408 + i] = dora_indicator_tile_ids[i]; /* i = 0..4 */
+input[408 + i] = sorted_dora_indicator_tile_ids[i]; /* i = 0..4 */
 ```
 
 - 実際のドラ牌種ではなく、公開済みの表ドラ表示牌の物理牌IDを渡します。
@@ -72,7 +74,7 @@ input[408 + i] = dora_indicator_tile_ids[i]; /* i = 0..4 */
 - 表示牌を入力することで、`wall` を除いても表示牌として公開されている牌を識別できます。
 - 実際のドラ牌種が必要な場合は、前処理で表示牌から変換できます。
 
-5枠への格納順序など、入力の正規化規則は今後確定します。
+入力APIは5枠を物理牌IDの昇順に並べ替え、未使用の `255` を末尾に詰めます。呼び出し側の配列は変更しません。同じ物理牌IDの重複はエラーです。同じ牌種の別の物理牌IDは受け付けます。公開順は保持しません。
 
 ### 打牌候補
 
@@ -80,7 +82,47 @@ input[408 + i] = dora_indicator_tile_ids[i]; /* i = 0..4 */
 input[413] = candidate_tile_id;
 ```
 
-候補IDは `0..135` の物理牌IDです。同じ局面で同じ牌種を切る場合は、同じ危険度を返すことを目指します。内部で牌種へ変換する案を検討しています。
+候補IDは `0..135` の物理牌IDで、そのまま保持します。同じ局面で同じ牌種を切る場合は、将来の推論器で同じ危険度を返すことを目指します。牌種への変換は今後の特徴抽出で検討します。今回の入力正規化は、同一牌種の物理牌IDをまとめる処理を含みません。
+
+### 公開C API
+
+ヘッダーは `include/cjong4_discard_risk/input.h` です。
+
+```c
+bool cj4dr_encode_input(const cj4_player_view *view,
+                       const cj4_tile_id dora_indicator_tile_ids[CJ4DR_DORA_COUNT],
+                       cj4_tile_id candidate_tile_id,
+                       uint8_t out_input[CJ4DR_INPUT_SIZE]);
+
+bool cj4dr_validate_input(const uint8_t *input, size_t size);
+```
+
+- `encode_input` はマスク済みビューを正規化・直列化し、成功時に `true` を返します。全ポインターは非NULLで、配列は宣言された容量が必要です。
+- プレイヤー番号、候補ID、表示牌ID、配置フィールドの符号化を検証します。相手の手牌配置が含まれている場合も `false` を返します。失敗時には出力バッファを変更しません。
+- `validate_input` は正確に414バイトであることと、正規化済みのフィールドを検証します。サイズ不一致・NULLの場合はデータを読みません。
+- 両APIは合法性や局面全体の整合性を判定しません。表示牌の公開状態も照合しないため、必ず公開牌だけを渡してください。検証成功は、完全状態からの情報混入がないことを保証するものではありません。
+- `wall` や点数・局・手番・独立したリーチ状態など、414バイトに含まれない情報は読み取りません。動的メモリ確保を行わず、入力生成の一時バイト配列は414バイトです。
+
+### 利用例
+
+cjong4の合法手一覧から選んだ打牌候補を渡します。表ドラ表示牌は、`wall` を除外する前のマスク済みビューから取得できます。
+
+```c
+#include "cjong4/core/state_query.h"
+#include "cjong4_discard_risk/input.h"
+
+/* viewはcj4m_make_player_view()またはプレイヤーデリゲートで取得済み。
+ * candidateはこのプレイヤーに提示された合法打牌の物理牌ID。 */
+bool encode_discard(const cj4_player_view *view, cj4_tile_id candidate,
+                    uint8_t input[CJ4DR_INPUT_SIZE])
+{
+    if (!view)
+        return false;
+    cj4_dora_indicator_list dora =
+        cj4_location_collect_dora_indicators(view->locations);
+    return cj4dr_encode_input(view, dora.items, candidate, input);
+}
+```
 
 ### 受け渡し形式とモデル特徴量
 
@@ -151,13 +193,39 @@ Playdateへの対応は当面の対象外です。
 
 ## 未確定事項
 
-1. 入力の正規化、表示牌の格納順、特徴量の内容と次元数。
-2. 自分・相手の識別とプレイヤー番号の相対化。
+1. 特徴量の内容と次元数、同一牌種の物理牌IDの扱い。
+2. 相対化済みの配置からのリーチ状態・副露数などの特徴抽出。
 3. 414バイトから把握できない局面情報が推定精度へ与える影響。
 4. 教師生成、標本抽出、学習損失、尺度補正、出力変換。
 5. NNの正式な構造と容量、量子化方式。
-6. 公開C API、モデル形式、バージョン管理、配布形式。
+6. 推論器の公開C API、モデル形式、モデルのバージョン管理、配布形式。
 7. 精度・危険度の過小評価・処理時間・メモリの合格基準。
 8. 基準モデルとの比較方法と評価用データセット。
 
-ビルド手順と利用例は、実装後に追加します。
+## ビルドとテスト
+
+CMake 3.16以上、C11コンパイラー、cjong4 4.0.0互換のソースまたはインストール済みパッケージが必要です。隣接するcjong4ソースを利用する場合:
+
+```sh
+cmake -S . -B build -DCJONG4_SOURCE_DIR=../cjong4 -DCJ4DR_BUILD_TESTS=ON
+cmake --build build -j4
+ctest --test-dir build --output-on-failure
+```
+
+`CJONG4_SOURCE_DIR` を省略すると `find_package(cjong4 4.0.0 CONFIG REQUIRED)` を使用します。親プロジェクトですでに `cjong4::cj4` が定義されている場合は、そのターゲットを利用します。依存ソースの自動ダウンロードは行いません。
+
+インストールしたライブラリはC/C++から利用できます。
+
+```sh
+cmake --install build --prefix "$PWD/build/stage"
+cmake -S tests/package_consumer -B build/consumer -DCMAKE_PREFIX_PATH="$PWD/build/stage"
+cmake --build build/consumer -j4
+ctest --test-dir build/consumer --output-on-failure
+```
+
+```cmake
+find_package(cjong4_discard_risk 0.1 CONFIG REQUIRED)
+target_link_libraries(your_target PRIVATE cjong4_discard_risk::cj4dr)
+```
+
+テストは、414バイトの期待値、全座席の相対化、全副露種類・グループ、ツモ切り・リーチ宣言・鳴かれた捨牌の保持、表示牌の並べ替え、候補ID保持、各フィールドの全256値、バッファ境界・失敗時の出力保持、cjong4のマスク済みビュー・合法手との接続を確認します。推論精度とWebAssemblyでの動作確認は今後の段階です。
