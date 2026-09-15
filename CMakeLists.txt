@@ -1,10 +1,11 @@
 cmake_minimum_required(VERSION 3.16)
-project(cjong4_discard_risk VERSION 0.1.0 LANGUAGES C)
+project(cjong4_discard_risk VERSION 0.2.0 LANGUAGES C)
 
 include(CMakePackageConfigHelpers)
 include(GNUInstallDirs)
 
 option(CJ4DR_BUILD_TESTS "Build discard-risk tests" OFF)
+option(CJ4DR_BUILD_TOOLS "Build the model evaluation CLI" OFF)
 set(CJONG4_SOURCE_DIR "" CACHE PATH "Path to a cjong4 source tree")
 
 if(NOT TARGET cjong4::cj4)
@@ -16,7 +17,7 @@ if(NOT TARGET cjong4::cj4)
     endif()
 endif()
 
-add_library(cj4dr STATIC src/input.c)
+add_library(cj4dr STATIC src/input.c src/model.c src/evaluator.c)
 add_library(cjong4_discard_risk::cj4dr ALIAS cj4dr)
 target_compile_features(cj4dr PUBLIC c_std_11)
 set_target_properties(cj4dr PROPERTIES C_EXTENSIONS OFF)
@@ -34,9 +35,15 @@ function(cj4dr_enable_warnings target)
 endfunction()
 cj4dr_enable_warnings(cj4dr)
 
+if(CJ4DR_BUILD_TOOLS)
+    add_executable(cj4dr_evaluate tools/evaluate.c)
+    target_link_libraries(cj4dr_evaluate PRIVATE cj4dr)
+    cj4dr_enable_warnings(cj4dr_evaluate)
+endif()
+
 if(CJ4DR_BUILD_TESTS)
     enable_testing()
-    add_executable(cj4dr_input_tests tests/test_input.c)
+    add_executable(cj4dr_input_tests tests/test_input.c tests/test_model.c)
     target_link_libraries(cj4dr_input_tests PRIVATE cj4dr)
     cj4dr_enable_warnings(cj4dr_input_tests)
     if(MSVC)
