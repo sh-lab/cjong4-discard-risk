@@ -13,19 +13,24 @@ typedef struct {
     uint8_t hidden[CJ4DR_HIDDEN_SIZE];
 } cj4dr_workspace;
 
-/* RGB bytes enter the pixel layers unchanged (0..255).
+/* Score all 34 tile types in one call, including types not in the player's hand.
+ * out_danger must hold 34 bytes: 1m..9m, 1p..9p, 1s..9s, E/S/W/N, white/green/red.
+ * Each score is independent, 0x00 (lowest danger) .. 0xff (highest).
+ * The caller filters legal discards and uses out_danger[cj4_tile_get_type(id)].
+ *
+ * RGB bytes enter the pixel layers unchanged (0..255).
  * Every layer: INT32 weighted sum + bias, then max(0,sum) / 2^shift (floor),
- * then saturation. Pixel/hidden layers saturate at 127, output at 255.
- * Candidate weights are added to the hidden sum before its shift.
+ * then saturation. Pixel/hidden layers saturate at 127, outputs at 255.
  * Validated bias bounds guarantee no signed overflow for any INT8 weights.
  *
- * Requires explicit model weights and non-overlapping input/model/workspace/
- * output storage. Checks model and input on each call. No dynamic allocation,
- * global mutable state, floating point, or libm. On failure neither workspace
- * nor out_danger is changed. A successful score is not a calibrated probability
- * or a guarantee of safety. Quality depends on supplied trained weights. */
+ * Requires explicit weights and non-overlapping input/model/workspace/output.
+ * Checks model and input on each call. No allocation, global mutable state,
+ * floating point, or libm. On failure the workspace and all 34 output bytes
+ * remain unchanged. Scores are not calibrated probabilities or safety
+ * guarantees; even examples trained with target 0 need not produce exactly 0. */
 bool cj4dr_evaluate(const cj4dr_model *model, const uint8_t *input, size_t size,
-                   cj4dr_workspace *workspace, uint8_t *out_danger);
+                   cj4dr_workspace *workspace,
+                   uint8_t out_danger[CJ4DR_OUTPUT_SIZE]);
 
 #ifdef __cplusplus
 }

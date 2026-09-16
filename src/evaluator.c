@@ -11,7 +11,7 @@ static uint8_t activate(int32_t sum, uint8_t shift, uint8_t maximum)
 }
 
 bool cj4dr_evaluate(const cj4dr_model *model, const uint8_t *input, size_t size,
-                   cj4dr_workspace *workspace, uint8_t *out_danger)
+                   cj4dr_workspace *workspace, uint8_t out_danger[CJ4DR_OUTPUT_SIZE])
 {
     if (!workspace || !out_danger || !cj4dr_model_validate(model) ||
         !cj4dr_validate_input(input, size))
@@ -34,16 +34,17 @@ bool cj4dr_evaluate(const cj4dr_model *model, const uint8_t *input, size_t size,
             }
         }
     }
-    cj4_tile_id candidate = input[CJ4DR_CANDIDATE_OFFSET];
     for (unsigned h = 0; h < CJ4DR_HIDDEN_SIZE; ++h) {
-        int32_t sum = model->hidden_bias[h] + model->candidate_weights[candidate][h];
+        int32_t sum = model->hidden_bias[h];
         for (unsigned i = 0; i < CJ4DR_CONTEXT_SIZE; ++i)
             sum += (int32_t)workspace->pixels[i] * model->hidden_weights[h][i];
         workspace->hidden[h] = activate(sum, model->hidden_shift, 127);
     }
-    int32_t sum = model->output_bias;
-    for (unsigned h = 0; h < CJ4DR_HIDDEN_SIZE; ++h)
-        sum += (int32_t)workspace->hidden[h] * model->output_weights[h];
-    *out_danger = activate(sum, model->output_shift, 255);
+    for (unsigned t = 0; t < CJ4DR_OUTPUT_SIZE; ++t) {
+        int32_t sum = model->output_bias[t];
+        for (unsigned h = 0; h < CJ4DR_HIDDEN_SIZE; ++h)
+            sum += (int32_t)workspace->hidden[h] * model->output_weights[t][h];
+        out_danger[t] = activate(sum, model->output_shift, 255);
+    }
     return true;
 }

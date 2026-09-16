@@ -10,9 +10,9 @@
 extern "C" {
 #endif
 
-/* v2: five row-major RGB images followed by a physical candidate ID.
- * Persist the schema version separately. v1 (414 bytes) is incompatible. */
-#define CJ4DR_INPUT_SCHEMA_VERSION 2u
+/* v3: five row-major RGB images only. Persist the schema version separately.
+ * v1 (414 bytes) and v2 (409 bytes with candidate ID) are incompatible. */
+#define CJ4DR_INPUT_SCHEMA_VERSION 3u
 
 enum {
     CJ4DR_LOCATION_STRIDE = 3,
@@ -21,8 +21,7 @@ enum {
     CJ4DR_DISCARD_HISTORY_OFFSET = 2,  /* B */
     CJ4DR_IMAGE_HEIGHT = 4,
     CJ4DR_RGB_SIZE = 408,
-    CJ4DR_CANDIDATE_OFFSET = 408,
-    CJ4DR_INPUT_SIZE = 409
+    CJ4DR_INPUT_SIZE = CJ4DR_RGB_SIZE
 };
 
 typedef enum {
@@ -51,24 +50,23 @@ size_t cj4dr_tile_rgb_offset(cj4_tile_id tile);
 
 /* Encode a masked view. Only player bits are relativized to the observer.
  * RGB values are otherwise unchanged. No dora, wall, tile aggregation, color
- * processing, or inferred flags. candidate must be 0..135. The caller supplies
- * an offered legal discard; legality and full state consistency are not checked.
+ * processing, or inferred flags. No candidate ID is accepted. The caller decides
+ * which outputs correspond to legal discards. Full state consistency is not checked.
  * Invalid field encodings/opponent hands are rejected. Requires a non-NULL
- * view and at least 409 writable output bytes. Failure leaves output unchanged.
+ * view and at least 408 writable output bytes. Failure leaves output unchanged.
  * No allocation. Sources and outputs must not overlap. */
-bool cj4dr_encode_input(const cj4_player_view *view, cj4_tile_id candidate,
+bool cj4dr_encode_input(const cj4_player_view *view,
                        uint8_t out_input[CJ4DR_INPUT_SIZE]);
 
-/* Exact v2 byte length and field validation; NULL/wrong size is not read.
+/* Exact v3 byte length and field validation; NULL/wrong size is not read.
  * Canonical hand owners must be 0. Does not validate game legality. */
 bool cj4dr_validate_input(const uint8_t *input, size_t size);
 
-/* Recover all relative locations and candidate losslessly; wall is set to 255.
- * Both outputs are required and must not overlap each other or the input.
- * Failure leaves both outputs unchanged. */
+/* Recover all relative locations losslessly; wall is set to 255.
+ * Output is required and must not overlap the input.
+ * Failure leaves output unchanged. */
 bool cj4dr_decode_input(const uint8_t *input, size_t size,
-                       cj4_location out_locations[CJ4_TILE_ID_COUNT],
-                       cj4_tile_id *out_candidate);
+                       cj4_location out_locations[CJ4_TILE_ID_COUNT]);
 
 #ifdef __cplusplus
 }

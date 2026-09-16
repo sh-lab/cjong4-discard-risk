@@ -17,7 +17,7 @@ bool cj4dr_model_validate(const cj4dr_model *model)
     if (!model || model->version != CJ4DR_MODEL_VERSION ||
         model->input_schema_version != CJ4DR_INPUT_SCHEMA_VERSION ||
         model->hidden_shift > CJ4DR_MODEL_SHIFT_MAX ||
-        model->output_shift > CJ4DR_MODEL_SHIFT_MAX || !bias_valid(model->output_bias))
+        model->output_shift > CJ4DR_MODEL_SHIFT_MAX)
         return false;
     for (unsigned bank = 0; bank < CJ4DR_PIXEL_BANKS; ++bank) {
         if (model->pixel_shift[bank] > CJ4DR_MODEL_SHIFT_MAX)
@@ -28,6 +28,9 @@ bool cj4dr_model_validate(const cj4dr_model *model)
     }
     for (unsigned h = 0; h < CJ4DR_HIDDEN_SIZE; ++h)
         if (!bias_valid(model->hidden_bias[h]))
+            return false;
+    for (unsigned t = 0; t < CJ4DR_OUTPUT_SIZE; ++t)
+        if (!bias_valid(model->output_bias[t]))
             return false;
     return true;
 }
@@ -56,7 +59,7 @@ static int8_t get_i8(uint8_t value)
 }
 
 /* Same field walk for encoding and decoding; no struct padding or native
- * signed/endian representation is written. Exactly 5573 payload bytes. */
+ * signed/endian representation is written. Exactly 4881 payload bytes. */
 #define MODEL_FIELDS(I8, I32, U8) \
     for (unsigned b = 0; b < CJ4DR_PIXEL_BANKS; ++b) \
         for (unsigned c = 0; c < CJ4DR_PIXEL_CHANNELS; ++c) \
@@ -66,12 +69,11 @@ static int8_t get_i8(uint8_t value)
     for (unsigned b = 0; b < CJ4DR_PIXEL_BANKS; ++b) { U8(pixel_shift[b]); } \
     for (unsigned h = 0; h < CJ4DR_HIDDEN_SIZE; ++h) \
         for (unsigned i = 0; i < CJ4DR_CONTEXT_SIZE; ++i) { I8(hidden_weights[h][i]); } \
-    for (unsigned t = 0; t < CJ4_TILE_ID_COUNT; ++t) \
-        for (unsigned h = 0; h < CJ4DR_HIDDEN_SIZE; ++h) { I8(candidate_weights[t][h]); } \
     for (unsigned h = 0; h < CJ4DR_HIDDEN_SIZE; ++h) { I32(hidden_bias[h]); } \
     U8(hidden_shift); \
-    for (unsigned h = 0; h < CJ4DR_HIDDEN_SIZE; ++h) { I8(output_weights[h]); } \
-    I32(output_bias); \
+    for (unsigned t = 0; t < CJ4DR_OUTPUT_SIZE; ++t) \
+        for (unsigned h = 0; h < CJ4DR_HIDDEN_SIZE; ++h) { I8(output_weights[t][h]); } \
+    for (unsigned t = 0; t < CJ4DR_OUTPUT_SIZE; ++t) { I32(output_bias[t]); } \
     U8(output_shift)
 
 bool cj4dr_model_encode(const cj4dr_model *model, uint8_t *output, size_t size)

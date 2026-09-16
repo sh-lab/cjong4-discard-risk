@@ -62,12 +62,11 @@ static uint8_t relative_owner(uint8_t value, cj4_player observer)
                      (relative << CJ4_LOCATION_PLAYER_SHIFT));
 }
 
-bool cj4dr_encode_input(const cj4_player_view *view, cj4_tile_id candidate,
+bool cj4dr_encode_input(const cj4_player_view *view,
                        uint8_t out_input[CJ4DR_INPUT_SIZE])
 {
     uint8_t encoded[CJ4DR_INPUT_SIZE];
-    if (!view || !out_input || view->player >= CJ4_PLAYER_COUNT ||
-        !cj4_tile_id_is_valid(candidate))
+    if (!view || !out_input || view->player >= CJ4_PLAYER_COUNT)
         return false;
     for (unsigned tile = 0; tile < CJ4_TILE_ID_COUNT; ++tile) {
         const cj4_location *location = &view->locations[tile];
@@ -79,7 +78,6 @@ bool cj4dr_encode_input(const cj4_player_view *view, cj4_tile_id candidate,
         rgb[1] = relative_owner(location->placement, view->player);
         rgb[2] = location->discard_history;
     }
-    encoded[CJ4DR_CANDIDATE_OFFSET] = candidate;
     memcpy(out_input, encoded, sizeof(encoded));
     return true;
 }
@@ -91,14 +89,13 @@ bool cj4dr_validate_input(const uint8_t *input, size_t size)
     for (size_t offset = 0; offset < CJ4DR_RGB_SIZE; offset += 3)
         if (!location_is_valid(input[offset], input[offset + 1], input[offset + 2], 0))
             return false;
-    return cj4_tile_id_is_valid(input[CJ4DR_CANDIDATE_OFFSET]);
+    return true;
 }
 
 bool cj4dr_decode_input(const uint8_t *input, size_t size,
-                       cj4_location out_locations[CJ4_TILE_ID_COUNT],
-                       cj4_tile_id *out_candidate)
+                       cj4_location out_locations[CJ4_TILE_ID_COUNT])
 {
-    if (!out_locations || !out_candidate || !cj4dr_validate_input(input, size))
+    if (!out_locations || !cj4dr_validate_input(input, size))
         return false;
     for (unsigned tile = 0; tile < CJ4_TILE_ID_COUNT; ++tile) {
         const uint8_t *rgb = input + cj4dr_tile_rgb_offset((cj4_tile_id)tile);
@@ -107,6 +104,5 @@ bool cj4dr_decode_input(const uint8_t *input, size_t size,
         out_locations[tile].placement = rgb[1];
         out_locations[tile].discard_history = rgb[2];
     }
-    *out_candidate = input[CJ4DR_CANDIDATE_OFFSET];
     return true;
 }

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(cjong4_discard_risk VERSION 0.2.0 LANGUAGES C)
+project(cjong4_discard_risk VERSION 0.3.0 LANGUAGES C)
 
 include(CMakePackageConfigHelpers)
 include(GNUInstallDirs)
@@ -52,6 +52,14 @@ if(CJ4DR_BUILD_TESTS)
         target_compile_options(cj4dr_input_tests PRIVATE -UNDEBUG)
     endif()
     add_test(NAME cj4dr_input_tests COMMAND cj4dr_input_tests)
+    if(CJ4DR_BUILD_TOOLS)
+        find_package(Python3 COMPONENTS Interpreter QUIET)
+        if(Python3_Interpreter_FOUND)
+            add_test(NAME cj4dr_cli_tests
+                COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_cli.py"
+                        $<TARGET_FILE:cj4dr_evaluate>)
+        endif()
+    endif()
 endif()
 
 install(TARGETS cj4dr EXPORT cjong4DiscardRiskTargets

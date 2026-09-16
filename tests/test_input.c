@@ -7,8 +7,8 @@
 #include "cjong4/manager/manager.h"
 #include "cjong4_discard_risk/input.h"
 
-_Static_assert(CJ4DR_INPUT_SCHEMA_VERSION == 2, "update schema fixtures");
-_Static_assert(CJ4DR_INPUT_SIZE == 409, "wire size changed");
+_Static_assert(CJ4DR_INPUT_SCHEMA_VERSION == 3, "update schema fixtures");
+_Static_assert(CJ4DR_INPUT_SIZE == 408, "wire size changed");
 
 
 static cj4_player_view empty_view(cj4_player observer)
@@ -22,14 +22,14 @@ static cj4_player_view empty_view(cj4_player observer)
 
 static void assert_unchanged(const uint8_t *output)
 {
-    for (size_t i = 0; i < 409; ++i)
+    for (size_t i = 0; i < 408; ++i)
         assert(output[i] == 0xa5);
 }
 
 static void test_wire_fixture(void)
 {
     cj4_player_view view = empty_view(2);
-    uint8_t output[411], expected[409];
+    uint8_t output[410], expected[408];
     /* Self hand; called riichi/tsumogiri discard owned by 3, pon by 1. */
     view.locations[7].placement = 0x40;
     view.locations[80].discard = 0xe3;
@@ -42,18 +42,17 @@ static void test_wire_fixture(void)
     expected[222] = 0xa3;
     expected[223] = 0xf1;
     expected[224] = 0x91;
-    expected[408] = 7;
     memset(output, 0xa5, sizeof(output));
-    assert(cj4dr_encode_input(&view, 7, output + 1));
-    assert(output[0] == 0xa5 && output[410] == 0xa5);
-    assert(memcmp(output + 1, expected, 409) == 0);
-    assert(cj4dr_validate_input(output + 1, 409));
+    assert(cj4dr_encode_input(&view, output + 1));
+    assert(output[0] == 0xa5 && output[409] == 0xa5);
+    assert(memcmp(output + 1, expected, 408) == 0);
+    assert(cj4dr_validate_input(output + 1, 408));
     assert(memcmp(&view, &original, sizeof(view)) == 0);
 }
 
 static void test_rotation_and_ignored_fields(void)
 {
-    uint8_t baseline[409], output[409];
+    uint8_t baseline[408], output[408];
     for (cj4_player observer = 0; observer < 4; ++observer) {
         cj4_player_view view = empty_view(observer);
         view.locations[0].placement = (uint8_t)(observer * 32);
@@ -67,7 +66,7 @@ static void test_rotation_and_ignored_fields(void)
                     view.locations[10 + relative * 20 + group * 5 + type].placement =
                         (uint8_t)(128 + owner * 32 + group * 8 + type);
         }
-        assert(cj4dr_encode_input(&view, 0, output));
+        assert(cj4dr_encode_input(&view, output));
         assert(cj4dr_validate_input(output, sizeof(output)));
         if (observer == 0)
             memcpy(baseline, output, sizeof(output));
@@ -81,21 +80,8 @@ static void test_rotation_and_ignored_fields(void)
         memcpy(altered.locations, view.locations, sizeof(view.locations));
         for (size_t tile = 0; tile < 136; ++tile)
             altered.locations[tile].wall = (uint8_t)tile;
-        assert(cj4dr_encode_input(&altered, 0, output));
+        assert(cj4dr_encode_input(&altered, output));
         assert(memcmp(baseline, output, sizeof(output)) == 0);
-    }
-}
-
-static void test_candidate_identity(void)
-{
-    cj4_player_view view = empty_view(0);
-    uint8_t baseline[409], output[409];
-    assert(cj4dr_encode_input(&view, 0, baseline));
-    for (unsigned tile = 0; tile < 136; ++tile) {
-        assert(cj4dr_encode_input(&view, (uint8_t)tile, output));
-        assert(memcmp(baseline, output, 408) == 0);
-        assert(output[408] == tile);
-        assert(cj4dr_validate_input(output, sizeof(output)));
     }
 }
 
@@ -106,8 +92,7 @@ static void test_image_layout_and_roundtrip(void)
     const unsigned offsets[] = {0, 108, 216, 324, 372};
     unsigned seen[136] = {0};
     cj4_player_view view = empty_view(0), restored = empty_view(0);
-    uint8_t input[409], roundtrip[409];
-    cj4_tile_id candidate = 255;
+    uint8_t input[408], roundtrip[408];
     for (unsigned image = 0; image < 5; ++image) {
         cj4dr_image_layout layout;
         assert(cj4dr_get_image_layout((cj4dr_image)image, &layout));
@@ -130,11 +115,10 @@ static void test_image_layout_and_roundtrip(void)
     }
     for (unsigned tile = 0; tile < 136; ++tile)
         assert(seen[tile] == 1);
-    assert(cj4dr_encode_input(&view, 135, input));
-    assert(cj4dr_decode_input(input, sizeof(input), restored.locations, &candidate));
-    assert(candidate == 135);
+    assert(cj4dr_encode_input(&view, input));
+    assert(cj4dr_decode_input(input, sizeof(input), restored.locations));
     assert(memcmp(view.locations, restored.locations, sizeof(view.locations)) == 0);
-    assert(cj4dr_encode_input(&restored, candidate, roundtrip));
+    assert(cj4dr_encode_input(&restored, roundtrip));
     assert(memcmp(input, roundtrip, sizeof(input)) == 0);
     for (unsigned tile = 136; tile < 256; ++tile)
         assert(cj4dr_tile_rgb_offset((uint8_t)tile) == SIZE_MAX);
@@ -146,14 +130,12 @@ static void test_image_layout_and_roundtrip(void)
     assert(cj4dr_image_tile_id((cj4dr_image)-1, 0, 0) == 255);
     assert(cj4dr_image_tile_id(CJ4DR_IMAGE_COUNT, 0, 0) == 255);
 
-    input[408] = 255;
-    assert(!cj4dr_decode_input(input, sizeof(input), restored.locations, &candidate));
-    assert(candidate == 135);
+    input[407] = 127; /* invalid history in the last pixel */
+    assert(!cj4dr_decode_input(input, sizeof(input), restored.locations));
     assert(memcmp(view.locations, restored.locations, sizeof(view.locations)) == 0);
-    assert(!cj4dr_decode_input(input, 408, restored.locations, &candidate));
-    assert(!cj4dr_decode_input(NULL, 409, restored.locations, &candidate));
-    assert(!cj4dr_decode_input(roundtrip, 409, NULL, &candidate));
-    assert(!cj4dr_decode_input(roundtrip, 409, restored.locations, NULL));
+    assert(!cj4dr_decode_input(input, 407, restored.locations));
+    assert(!cj4dr_decode_input(NULL, 408, restored.locations));
+    assert(!cj4dr_decode_input(roundtrip, 408, NULL));
 }
 
 static void test_all_field_bytes(void)
@@ -161,7 +143,7 @@ static void test_all_field_bytes(void)
     for (unsigned field = 0; field < 3; ++field) {
         for (unsigned byte = 0; byte < 256; ++byte) {
             cj4_player_view view = empty_view(0);
-            uint8_t output[409], input[409];
+            uint8_t output[408], input[408];
             bool expected;
             if (field == 0) {
                 view.locations[135].discard = (uint8_t)byte;
@@ -175,38 +157,26 @@ static void test_all_field_bytes(void)
                 expected = byte == 255 || byte % 128 <= 85;
             }
             memset(output, 0xa5, sizeof(output));
-            assert(cj4dr_encode_input(&view, 0, output) == expected);
+            assert(cj4dr_encode_input(&view, output) == expected);
             if (!expected)
                 assert_unchanged(output);
             memset(input, 255, sizeof(input));
-            input[408] = 0;
             input[405 + field] = (uint8_t)byte;
             assert(cj4dr_validate_input(input, sizeof(input)) == expected);
         }
-    }
-    for (unsigned byte = 0; byte < 256; ++byte) {
-        cj4_player_view view = empty_view(0);
-        uint8_t output[409], input[409];
-        memset(output, 0xa5, sizeof(output));
-        memset(input, 255, sizeof(input));
-        assert(cj4dr_encode_input(&view, (uint8_t)byte, output) == (byte < 136));
-        if (byte >= 136)
-            assert_unchanged(output);
-        input[408] = (uint8_t)byte;
-        assert(cj4dr_validate_input(input, sizeof(input)) == (byte < 136));
     }
 }
 
 static void test_invalid_arguments_and_wire(void)
 {
     cj4_player_view view = empty_view(0);
-    uint8_t output[409];
+    uint8_t output[408];
     memset(output, 0xa5, sizeof(output));
-    assert(!cj4dr_encode_input(NULL, 0, output));
-    assert(!cj4dr_encode_input(&view, 0, NULL));
+    assert(!cj4dr_encode_input(NULL, output));
+    assert(!cj4dr_encode_input(&view, NULL));
     for (unsigned player = 4; player < 256; ++player) {
         view.player = (uint8_t)player;
-        assert(!cj4dr_encode_input(&view, 0, output));
+        assert(!cj4dr_encode_input(&view, output));
     }
     assert_unchanged(output);
     for (cj4_player observer = 0; observer < 4; ++observer) {
@@ -214,16 +184,17 @@ static void test_invalid_arguments_and_wire(void)
         for (cj4_player owner = 0; owner < 4; ++owner) {
             view.locations[135].placement = (uint8_t)(owner * 32);
             memset(output, 0xa5, sizeof(output));
-            assert(cj4dr_encode_input(&view, 0, output) == (owner == observer));
+            assert(cj4dr_encode_input(&view, output) == (owner == observer));
             if (owner != observer)
                 assert_unchanged(output);
         }
     }
-    assert(!cj4dr_validate_input(NULL, 409));
+    assert(!cj4dr_validate_input(NULL, 408));
     const uint8_t short_input = 255;
     assert(!cj4dr_validate_input(&short_input, 0));
     assert(!cj4dr_validate_input(&short_input, 1));
-    assert(!cj4dr_validate_input(&short_input, 408));
+    assert(!cj4dr_validate_input(&short_input, 407));
+    assert(!cj4dr_validate_input(&short_input, 409)); /* v2 with candidate */
     assert(!cj4dr_validate_input(&short_input, 410));
     assert(!cj4dr_validate_input(&short_input, 414)); /* old schema */
 }
@@ -244,15 +215,15 @@ static void test_cjong4_integration(void)
         for (unsigned i = 0; i < count; ++i) {
             if (actions[i].type != CJ4_ACTION_DISCARD)
                 continue;
-            uint8_t input[409];
-            assert(cj4dr_encode_input(&view, actions[i].tile, input));
+            uint8_t input[408];
+            assert(cj4dr_encode_input(&view, input));
             assert(cj4dr_validate_input(input, sizeof(input)));
             ++tested;
         }
-        uint8_t input[409];
+        uint8_t input[408];
         cj4_hand hand = cj4_location_collect_hand(view.locations, observer);
         assert(hand.count > 0);
-        assert(cj4dr_encode_input(&view, hand.items[0], input));
+        assert(cj4dr_encode_input(&view, input));
         for (unsigned tile = 0; tile < 136; ++tile) {
             if (cj4_location_is_hand(state.locations[tile].placement)) {
                 cj4_player owner = cj4_location_placement_player(state.locations[tile].placement);
@@ -261,7 +232,7 @@ static void test_cjong4_integration(void)
         }
         /* Copying the full state into a view is rejected. */
         memcpy(view.locations, state.locations, sizeof(view.locations));
-        assert(!cj4dr_encode_input(&view, hand.items[0], input));
+        assert(!cj4dr_encode_input(&view, input));
     }
     assert(tested > 0);
 }
@@ -272,7 +243,6 @@ int main(void)
 {
     test_wire_fixture();
     test_rotation_and_ignored_fields();
-    test_candidate_identity();
     test_image_layout_and_roundtrip();
     test_all_field_bytes();
     test_invalid_arguments_and_wire();

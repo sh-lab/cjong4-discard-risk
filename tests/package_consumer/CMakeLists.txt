@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 project(cj4dr_package_consumer LANGUAGES C CXX)
-find_package(cjong4_discard_risk 0.2 CONFIG REQUIRED)
+find_package(cjong4_discard_risk 0.3 CONFIG REQUIRED)
 add_executable(consumer main.c)
 target_link_libraries(consumer PRIVATE cjong4_discard_risk::cj4dr)
 add_executable(consumer_cpp main.cpp)
