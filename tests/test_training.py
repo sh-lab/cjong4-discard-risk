@@ -18,7 +18,7 @@ import torch
 from training import data
 from training.evaluate import c_compare
 from training.integer import BIAS_LIMIT, FIELDS, decode, encode, metrics, predict
-from training.model import RiskModel, load_checkpoint, masked_loss
+from training.model import RiskModel, activate, load_checkpoint, masked_loss
 
 ROOT = Path(__file__).resolve().parents[1]
 C_EVALUATOR = os.environ.get("CJ4DR_EVALUATOR")
@@ -99,6 +99,62 @@ class DataTests(unittest.TestCase):
 
 
 class ModelTests(unittest.TestCase):
+    def test_saturated_gradient_and_recovery(self):
+        value = torch.tensor([-10., 0., 10.5, 255., 300.], dtype=torch.float64, requires_grad=True)
+        output = activate(value, 255)
+        np.testing.assert_array_equal(output.detach().numpy(), [0, 0, 10, 255, 255])
+        output.sum().backward()
+        np.testing.assert_allclose(value.grad.numpy(), [.01, 1, 1, 1, .01])
+        model = RiskModel((0, 0, 0, 0, 0))
+        with torch.no_grad():
+            for parameter in model.parameters(): parameter.zero_()
+            model.output_bias.fill_(-1)
+        x = torch.from_numpy(fixture(1)["rgb"])
+        target = torch.full((1, 34), 255., dtype=torch.float64)
+        mask = torch.zeros_like(target)
+        mask[0, 0] = 1
+        optimizer = torch.optim.Adam(model.parameters(), lr=.03)
+        self.assertEqual(model(x)[0, 0].item(), 0)
+        for _ in range(150):
+            optimizer.zero_grad()
+            masked_loss(model(x), target, mask).backward()
+            optimizer.step()
+            model.project()
+        self.assertGreater(model(x)[0, 0].item(), 0)
+        self.assertEqual(model(x)[0, 1].item(), 0)  # unspecified outputs remain untrained
+
+    def test_v1_checkpoint_still_exports_same_integer_model(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "legacy.pt"
+            model = RiskModel()
+            raw = encode(model.integers())
+            torch.save(dict(format_version=1, input_schema=3, model_version=2,
+                            shifts=list(model.shifts), state_dict=model.state_dict()), path)
+            loaded, _ = load_checkpoint(path)
+            self.assertEqual(encode(loaded.integers()), raw)
+
+    def test_zero_baseline_danger_metrics_and_auc(self):
+        target = np.zeros((1, 34), dtype=np.uint8)
+        target[0, 2:4] = 255
+        mask = np.zeros_like(target)
+        mask[0, :4] = 1
+        zero = metrics(np.zeros_like(target), target, mask)
+        self.assertEqual(zero["mse_normalized"], zero["zero_baseline_mse"])
+        self.assertEqual(zero["danger_zero_predictions"], 2)
+        self.assertEqual(zero["danger_mse"], 1)
+        self.assertEqual(zero["balanced_mse"], .5)
+        self.assertEqual(zero["nonzero_auc"], .5)
+        self.assertTrue(zero["all_zero_predictions"])
+        perfect = metrics(target, target, mask)
+        self.assertEqual(perfect["nonzero_auc"], 1)
+        self.assertEqual(perfect["baseline_improvement"], 1)
+        reverse = metrics(255 - target, target, mask)
+        self.assertEqual(reverse["nonzero_auc"], 0)
+        single = metrics(np.zeros_like(target), np.zeros_like(target), mask)
+        self.assertIsNone(single["nonzero_auc"])
+        self.assertIsNone(single["balanced_mse"])
+        self.assertIsNone(single["baseline_improvement"])
+
     def test_masked_loss_gradients_and_learning(self):
         prediction = torch.tensor([[0., 100., 200.]], requires_grad=True)
         mask = torch.tensor([[1., 0., 1.]])
@@ -193,11 +249,36 @@ class ModelTests(unittest.TestCase):
                     self.assertEqual(result.returncode == 0, valid, (channel, value))
 
 
+class SamplingTests(unittest.TestCase):
+    def test_sampling_and_partition_isolation(self):
+        sample = fixture(18)
+        sample["metadata"] = np.array([json.dumps({"actual_ron": i < 2, "discarded_tile": 0})
+                                        for i in range(18)])
+        sample["target"][:2, 0] = 255
+        flags = data.actual_ron_flags(sample)
+        indices = np.arange(12)  # 12..17 are held out
+        order = data.epoch_indices(indices, flags, .5, 17)
+        self.assertEqual(int(flags[order].sum()), 6)
+        self.assertTrue(np.isin(order, indices).all())
+        np.testing.assert_array_equal(order, data.epoch_indices(indices, flags, .5, 17))
+        natural = data.epoch_indices(indices, flags, 0, 17)
+        np.testing.assert_array_equal(np.sort(natural), indices)
+        with self.assertRaises(ValueError):
+            data.epoch_indices(np.arange(2, 12), flags, .5, 17)
+        sample["target"][0, 0] = 0
+        with self.assertRaises(ValueError): data.actual_ron_flags(sample)
+
+
 class PipelineTests(unittest.TestCase):
     def test_train_resume_export_and_evaluate(self):
         with tempfile.TemporaryDirectory() as directory:
             directory = Path(directory)
             parts = data.split(fixture())
+            for part in parts:
+                part["target"][:] = 0
+                part["target"][1, 0] = 255
+                part["metadata"] = np.array([json.dumps({"actual_ron": i == 1, "discarded_tile": 0})
+                                               for i in range(len(part["rgb"]))])
             parts[0]["mask"][0] = 0  # retained in the file, excluded from training
             paths = [directory / f"{name}.npz" for name in ("train", "validation", "test")]
             for path, part in zip(paths, parts):
@@ -212,7 +293,8 @@ class PipelineTests(unittest.TestCase):
                 self.assertEqual(result.returncode == 0, success, result.stdout + result.stderr)
                 return result
 
-            options = ("--train", paths[0], "--validation", paths[1], "--batch-size", 4)
+            options = ("--train", paths[0], "--validation", paths[1], "--batch-size", 4,
+                       "--ron-fraction", .5, "--selection-metric", "auc")
             first = run("train", *options, "--output", directory / "run", "--epochs", 2)
             self.assertIn("unlabeled skipped=1", first.stdout)
             run("train", *options, "--output", directory / "run", "--epochs", 4,

@@ -15,9 +15,27 @@ def round_ste(value):
     return value + (value.round() - value).detach()
 
 
+class QuantizedActivation(torch.autograd.Function):
+    """Exact integer forward, leaky surrogate derivative outside the legal range.
+
+    Saturated outputs must be able to recover from a wrong zero/maximum prediction.
+    This derivative is training-only; the deployed C activation is unchanged.
+    """
+    @staticmethod
+    def forward(ctx, value, cap):
+        ctx.save_for_backward(value)
+        ctx.cap = cap
+        return value.clamp(0, cap).floor()
+
+    @staticmethod
+    def backward(ctx, gradient):
+        (value,) = ctx.saved_tensors
+        slope = torch.where((value >= 0) & (value <= ctx.cap), 1.0, 0.01)
+        return gradient * slope, None
+
+
 def activate(value, cap):
-    clipped = value.clamp(0, cap)
-    return clipped + (clipped.floor() - clipped).detach()
+    return QuantizedActivation.apply(value, cap)
 
 
 class RiskModel(nn.Module):
@@ -93,7 +111,8 @@ def masked_loss(prediction, target, mask):
 
 def load_checkpoint(path):
     saved = torch.load(path, map_location="cpu", weights_only=True)
-    if (saved.get("format_version"), saved.get("input_schema"), saved.get("model_version")) != (1, 3, 2):
+    if (saved.get("format_version") not in (1, 2) or
+            (saved.get("input_schema"), saved.get("model_version")) != (3, 2)):
         raise ValueError("unsupported training checkpoint")
     model = RiskModel(tuple(saved["shifts"]))
     model.load_state_dict(saved["state_dict"], strict=True)

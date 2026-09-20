@@ -6,6 +6,8 @@ include(GNUInstallDirs)
 
 option(CJ4DR_BUILD_TESTS "Build discard-risk tests" OFF)
 option(CJ4DR_BUILD_TOOLS "Build model evaluation and teacher generation CLIs" OFF)
+option(CJ4DR_BUILD_STANDARD_GENERATOR "Build standard-opponent self-play generator" OFF)
+set(CJ4DR_OPPONENT_SOURCE_DIR "" CACHE PATH "Optional cjong4-opponent source tree")
 set(CJONG4_SOURCE_DIR "" CACHE PATH "Path to a cjong4 source tree")
 
 if(NOT TARGET cjong4::cj4)
@@ -44,6 +46,19 @@ if(CJ4DR_BUILD_TOOLS)
     cj4dr_enable_warnings(cj4dr_generate)
 endif()
 
+if(CJ4DR_BUILD_STANDARD_GENERATOR)
+    if(NOT TARGET cjong4::opponents)
+        if(CJ4DR_OPPONENT_SOURCE_DIR)
+            add_subdirectory("${CJ4DR_OPPONENT_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/opponent")
+        else()
+            find_package(cjong4-opponent 1.0.4 CONFIG REQUIRED)
+        endif()
+    endif()
+    add_executable(cj4dr_generate_standard tools/generate_standard.c tools/teacher.c)
+    target_link_libraries(cj4dr_generate_standard PRIVATE cj4dr cjong4::opponents)
+    cj4dr_enable_warnings(cj4dr_generate_standard)
+endif()
+
 if(CJ4DR_BUILD_TESTS)
     enable_testing()
     add_executable(cj4dr_input_tests tests/test_input.c tests/test_model.c)
@@ -65,15 +80,22 @@ if(CJ4DR_BUILD_TESTS)
         target_compile_options(cj4dr_teacher_tests PRIVATE -UNDEBUG)
     endif()
     add_test(NAME cj4dr_teacher_tests COMMAND cj4dr_teacher_tests)
-    if(CJ4DR_BUILD_TOOLS)
+    if(CJ4DR_BUILD_TOOLS OR CJ4DR_BUILD_STANDARD_GENERATOR)
         find_package(Python3 COMPONENTS Interpreter QUIET)
         if(Python3_Interpreter_FOUND)
-            add_test(NAME cj4dr_cli_tests
-                COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_cli.py"
-                        $<TARGET_FILE:cj4dr_evaluate>)
-            add_test(NAME cj4dr_generator_tests
-                COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_generate.py"
-                        $<TARGET_FILE:cj4dr_generate>)
+            if(CJ4DR_BUILD_TOOLS)
+                add_test(NAME cj4dr_cli_tests
+                    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_cli.py"
+                            $<TARGET_FILE:cj4dr_evaluate>)
+                add_test(NAME cj4dr_generator_tests
+                    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_generate.py"
+                            $<TARGET_FILE:cj4dr_generate>)
+            endif()
+            if(CJ4DR_BUILD_STANDARD_GENERATOR)
+                add_test(NAME cj4dr_standard_generator_tests
+                    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_standard_generate.py"
+                            $<TARGET_FILE:cj4dr_generate_standard>)
+            endif()
         endif()
     endif()
 endif()

@@ -35,6 +35,14 @@ CPU/CUDAともに内部計算はfloat64です。Cの有効なINT32積和を正�
 RGBは0〜255の生の値をそのまま渡します。AMP、TF32、MPS、分散学習は使用しません。
 float64の速度はGPUによって異なり、この小型NNではCPUとの実測比較を推奨します。
 
+## standard対局のロン局面を使う
+
+`standard(1)` 4人の実対局から通常ロン直前の危険例を集める場合は、
+[standard対局による生成・学習手順](../docs/standard-selfplay.md) を使用してください。
+通常局面も保存して対局単位で分割し、ロン局面の再サンプリングは学習側だけに適用します。
+学習v2では飽和した出力へも近似勾配を通し、全00基準・危険側誤差・AUCを確認できます。
+以前のv1チェックポイントは書き出し可能ですが、途中再開せず新しいrunで学習します。
+
 ## 本学習用の教師データを生成する
 
 ルートREADMEの手順で `CJ4DR_BUILD_TOOLS=ON` にして再ビルドします。
@@ -142,7 +150,7 @@ seedとgroup IDのSHA-256で順序を決めるため、元ファイル内の行�
 python -m training.train \
     --train datasets/split/train.npz \
     --validation datasets/split/validation.npz \
-    --output runs/risk-001 --epochs 100 --batch-size 256 --lr 0.03 --seed 1 \
+    --output runs/risk-001 --epochs 100 --batch-size 256 --lr 0.003 --seed 1 \
     --device cpu
 ```
 
@@ -158,16 +166,17 @@ python -m training.train \
 - 学習中の実数パラメーターから、INT8重みとINT32バイアスを毎回作る。
 - 量子化は最近接丸め（ちょうど中間なら偶数）、範囲内への制限を行う。
 - forwardは量子化済み重みで計算し、Cと同じReLU・2の累乗除算・切捨て・飽和を行う。
-- backwardは丸め・切捨ての勾配をそのまま通すSTEを使用。範囲外はclampの勾配に従う。
+- backwardは丸め・切捨ての勾配をそのまま通すSTEを使用。活性化の範囲外でも0.01倍の近似勾配を通し、誤った飽和からの復帰を可能にする。
+  重み・バイアス自体は引き続き有効範囲へ制限する。
 - シフトは固定。既定は数牌3、風3、三元3、中間6、出力4。
   `--shifts 3 3 3 6 4` で指定でき、各値は0〜31。
 
 保存物:
 
-- `best.pt`: 検証の指定要素MSEが最小だったモデル。
+- `best.pt`: 検証の選択指標が最良だったモデル（既定は指定要素MSE）。
 - `last.pt`: 最終完了epochの重み・optimizer・設定を含む再開用チェックポイント。
 - `metrics.jsonl`: 各epochの学習MSE、検証MSE/MAE、過小推定量、安全教師値での平均予測、
-  牌種別の指定数・MAE。
+  牌種別の指定数・MAE、全00基準、危険側MSEと平均予測、AUC。
 
 チェックポイントには入力/モデルのバージョン、データファイルのSHA-256、
 設定、PyTorch/NumPyバージョンも保存します。
@@ -178,7 +187,7 @@ python -m training.train \
 python -m training.train \
     --train datasets/split/train.npz \
     --validation datasets/split/validation.npz \
-    --output runs/risk-001 --epochs 200 --batch-size 256 --lr 0.03 --seed 1 \
+    --output runs/risk-001 --epochs 200 --batch-size 256 --lr 0.003 --seed 1 \
     --device cpu --resume runs/risk-001/last.pt
 ```
 

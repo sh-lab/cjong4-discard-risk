@@ -90,6 +90,42 @@ def split(data, validation_fraction=0.1, test_fraction=0.1, seed=1):
     return parts
 
 
+def actual_ron_flags(dataset):
+    """Management-only flags, never part of the NN input."""
+    result = np.zeros(len(dataset["rgb"]), dtype=bool)
+    for i, raw in enumerate(dataset["metadata"]):
+        metadata = json.loads(raw)
+        flag = metadata.get("actual_ron", False)
+        if type(flag) is not bool:
+            raise ValueError("actual_ron must be a JSON boolean")
+        if flag:
+            tile = metadata.get("discarded_tile")
+            if type(tile) is not int or not 0 <= tile < 136:
+                raise ValueError("actual_ron requires a physical discarded_tile ID")
+            tile_type = tile // 4
+            if dataset["mask"][i, tile_type] != 1 or dataset["target"][i, tile_type] != 255:
+                raise ValueError("actual_ron tile must have a specified FF teacher")
+            result[i] = True
+    return result
+
+
+def epoch_indices(indices, ron_flags, fraction, seed):
+    """Resample within the already isolated training partition only."""
+    rng = np.random.default_rng(seed)
+    if not 0 <= fraction < 1:
+        raise ValueError("ron fraction must be in [0,1)")
+    if fraction == 0:
+        return rng.permutation(indices)
+    positive = indices[ron_flags[indices]]
+    background = indices[~ron_flags[indices]]
+    if not len(positive) or not len(background) or len(indices) < 2:
+        raise ValueError("ron sampling requires both actual-ron and background training rows")
+    n = max(1, min(len(indices) - 1, round(len(indices) * fraction)))
+    order = np.concatenate((rng.choice(positive, n, replace=True),
+                            rng.choice(background, len(indices) - n, replace=True)))
+    return rng.permutation(order)
+
+
 def pack(source):
     rows = []
     source = Path(source)
