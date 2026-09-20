@@ -150,6 +150,7 @@ def main():
               f"validation_mse={report['mse_normalized']:.6f} "
               f"validation_mae={report['mae_gray']:.3f} "
               f"danger_mse={report['danger_mse']} auc={report['nonzero_auc']} "
+              f"ff_auc={report['ff_auc']} ff_mean={report['ff_mean_prediction']} "
               f"all_zero={report['all_zero_predictions']}", flush=True)
 
 

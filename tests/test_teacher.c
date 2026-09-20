@@ -38,8 +38,17 @@ static void check_sample(const cj4_mahjong *state, const cj4_rules *rules)
     assert(memcmp(legal, teacher.mask, sizeof(legal)) == 0);
 }
 
+void test_staged_teacher(void);
+#ifdef CJ4DR_TEST_STANDARD
+void test_staged_selfplay(void);
+#endif
+
 int main(void)
 {
+    test_staged_teacher();
+#ifdef CJ4DR_TEST_STANDARD
+    test_staged_selfplay();
+#endif
     cj4_rules rules = cj4_rules_default();
     for (unsigned type = 0; type < 34; ++type)
         for (unsigned seed = 0; seed < 4; ++seed)

@@ -249,6 +249,41 @@ class ModelTests(unittest.TestCase):
                     self.assertEqual(result.returncode == 0, valid, (channel, value))
 
 
+class StagedTeacherTests(unittest.TestCase):
+    def test_staged_policy_validation_and_metrics(self):
+        sample = fixture(2)
+        sample["mask"][:] = 0
+        sample["mask"][:, :3] = 1
+        sample["target"][:] = 0
+        sample["target"][0, :3] = [0, 64, 192]
+        sample["target"][1, :3] = [32, 160, 255]
+        sample["metadata"] = np.array([
+            json.dumps(dict(teacher_policy="staged-v1", actual_ron=False, discarded_tile=0)),
+            json.dumps(dict(teacher_policy="staged-v1", actual_ron=True, discarded_tile=8))])
+        data.validate(sample)
+        np.testing.assert_array_equal(data.actual_ron_flags(sample), [False, True])
+        prediction = sample["target"].copy()
+        prediction[1, 2] = 200
+        result = metrics(prediction, sample["target"], sample["mask"])
+        self.assertEqual(result["ff_labels"], 1)
+        self.assertEqual(result["ff_mean_prediction"], 200)
+        self.assertEqual(result["ff_auc"], 1)
+        self.assertEqual(result["per_target"][-1]["mae_gray"], 55)
+        self.assertEqual(sum(x["labels"] for x in result["per_target"]), 6)
+        sample["target"][0, 0] = 255
+        with self.assertRaisesRegex(ValueError, "without actual ron"): data.validate(sample)
+        sample["target"][0, 0] = 60
+        with self.assertRaisesRegex(ValueError, "invalid staged-v1"): data.validate(sample)
+        sample["target"][0, 0] = 0
+        sample["target"][1, 1] = 255
+        with self.assertRaisesRegex(ValueError, "only the actual ron tile"): data.validate(sample)
+        sample["target"][1, 1:3] = [160, 192]
+        with self.assertRaisesRegex(ValueError, "only the actual ron tile"): data.validate(sample)
+        result = metrics(sample["target"], sample["target"], sample["mask"])
+        self.assertIsNone(result["ff_auc"])
+        self.assertIsNone(result["ff_mean_prediction"])
+
+
 class SamplingTests(unittest.TestCase):
     def test_sampling_and_partition_isolation(self):
         sample = fixture(18)

@@ -1,6 +1,6 @@
 /* Full standard(1) self-play. Keep input BEFORE the discard; mark actual ron
  * only after the discard-response step. Chankan is deliberately excluded. */
-#include "teacher.h"
+#include "staged_teacher.h"
 #include "cjong4/opponent/opponent_standard.h"
 #include "cjong4/core/state_init.h"
 #include "cjong4/core/state_query.h"
@@ -20,7 +20,7 @@
 static volatile sig_atomic_t interrupted;
 static void stop(int number) { interrupted = number; }
 
-typedef struct { uint64_t samples, ron, safe, dangerous; } statistics;
+typedef struct { uint64_t samples, ron, safe, dangerous, ff; } statistics;
 
 static bool write_sample(FILE *file, const cj4dr_teacher *sample,
                           uint64_t seed, uint64_t game, unsigned round,
@@ -42,12 +42,13 @@ static bool write_sample(FILE *file, const cj4dr_teacher *sample,
     for (unsigned t = 0; t < 34; ++t) {
         if (fprintf(file, "%s%u", t ? "," : "", sample->mask[t]) < 0) return false;
         if (sample->mask[t]) {
+            if (sample->target[t] == 255) ++stats->ff;
             if (sample->target[t]) ++stats->dangerous;
             else ++stats->safe;
         }
     }
     if (fprintf(file, "],\"group\":\"standard-v1/seed-%" PRIu64 "/game-%" PRIu64 "\","
-                "\"metadata\":{\"source\":\"standard-selfplay\",\"generator_version\":1,"
+                "\"metadata\":{\"source\":\"standard-selfplay\",\"generator_version\":2,\"teacher_policy\":\"staged-v1\","
                 "\"input_schema\":3,\"rules\":\"cj4-default-v3\",\"opponent\":\"standard(1)\","
                 "\"seed\":\"%" PRIu64 "\",\"game\":%" PRIu64 ",\"round\":%u,"
                 "\"step\":%u,\"player\":%u,\"discarded_tile\":%d,\"actual_ron\":%s,"
@@ -70,6 +71,7 @@ static bool generate_game(FILE *file, uint64_t seed, uint64_t game,
     cj4m_player_delegate delegates[4];
     for (unsigned p = 0; p < 4; ++p) delegates[p] = cj4_opponent_standard(1);
     cj4dr_teacher pending;
+    cj4dr_safety safety = {0};
     bool have_pending = false;
     unsigned pending_step = 0, pending_player = 0, round = 0, step = 0;
     int discarded = -1;
@@ -77,7 +79,7 @@ static bool generate_game(FILE *file, uint64_t seed, uint64_t game,
         cj4_phase phase = cj4_state_phase(&state);
         if (phase == CJ4_PHASE_GAME_END) return !have_pending;
         if (phase == CJ4_PHASE_DRAW || phase == CJ4_PHASE_AFTER_CALL) {
-            if (have_pending || !cj4dr_make_teacher(&state, &rules, &pending)) break;
+            if (have_pending || !cj4dr_make_staged_teacher(&state, &rules, &safety, &pending)) break;
             pending_step = step;
             pending_player = cj4_state_current_player(&state);
             discarded = -1;
@@ -100,12 +102,14 @@ static bool generate_game(FILE *file, uint64_t seed, uint64_t game,
                 bool ron = phase == CJ4_PHASE_DISCARD &&
                     cj4_state_phase(&next) == CJ4_PHASE_ROUND_END &&
                     cj4_state_round_end_type(&next) == CJ4_ROUND_END_RON;
+                if (ron && !cj4dr_mark_actual_ron(&pending, discarded)) break;
                 if (!write_sample(file, &pending, seed, game, round, pending_step,
                                   pending_player, discarded, ron,
                                   ron ? next.winner_mask : 0, stats)) break;
                 have_pending = false;
             }
         }
+        cj4dr_safety_observe(&safety, &state, &next);
         state = next;
     }
     fprintf(stderr, "generation failed: seed=%" PRIu64 " game=%" PRIu64
@@ -182,7 +186,7 @@ int main(int argc, char **argv)
     free(partial);
     if (!ok) return 1;
     fprintf(stderr, "saved samples=%" PRIu64 " actual_ron=%" PRIu64
-            " safe_labels=%" PRIu64 " dangerous_labels=%" PRIu64 "\n",
-            stats.samples, stats.ron, stats.safe, stats.dangerous);
+            " safe_labels=%" PRIu64 " nonzero_labels=%" PRIu64 " ff_labels=%" PRIu64 "\n",
+            stats.samples, stats.ron, stats.safe, stats.dangerous, stats.ff);
     return 0;
 }

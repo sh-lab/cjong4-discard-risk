@@ -97,6 +97,7 @@ def metrics(prediction, target, mask):
     values = error[selected]
     safe = selected & (target == 0)
     dangerous = selected & (target != 0)
+    ff = selected & (target == 255)
     mse = float(np.mean((values / 255) ** 2))
     baseline = float(np.mean((target[selected].astype(np.float64) / 255) ** 2))
     safe_mse = float(np.mean((error[safe] / 255) ** 2)) if safe.any() else None
@@ -118,6 +119,16 @@ def metrics(prediction, target, mask):
         "all_zero_predictions": bool((prediction[selected] == 0).all()),
         "balanced_mse": (safe_mse + danger_mse) / 2 if safe.any() and dangerous.any() else None,
         "nonzero_auc": nonzero_auc(prediction[selected], target[selected] != 0),
+        "ff_labels": int(ff.sum()),
+        "ff_mean_prediction": float(prediction[ff].mean()) if ff.any() else None,
+        "ff_mse": float(np.mean((error[ff] / 255) ** 2)) if ff.any() else None,
+        "ff_auc": nonzero_auc(prediction[selected], target[selected] == 255),
+        "per_target": [
+            {"target": int(value), "labels": int(np.sum(selected & (target == value))),
+             "mean_prediction": float(prediction[selected & (target == value)].mean()),
+             "mae_gray": float(np.abs(error[selected & (target == value)]).mean())}
+            for value in np.unique(target[selected])
+        ],
         "per_tile": [
             {"labels": int(selected[:, t].sum()),
              "mae_gray": float(np.abs(error[selected[:, t], t]).mean())

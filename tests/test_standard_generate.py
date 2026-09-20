@@ -38,8 +38,10 @@ with tempfile.TemporaryDirectory(prefix="cj4dr-standard-") as directory:
         rgb = bytes.fromhex(row["rgb_hex"])
         assert len(rgb) == 408
         assert metadata["source"] == "standard-selfplay"
+        assert metadata["generator_version"] == 2
+        assert metadata["teacher_policy"] == "staged-v1"
         assert len(row["target"]) == len(row["mask"]) == 34
-        assert set(row["target"]) <= {0, 255}
+        assert set(row["target"]) <= {0, 16, 32, 64, 96, 128, 160, 192, 255}
         assert set(row["mask"]) <= {0, 1}
         assert not any(x in (32, 64, 96) for x in rgb[1::3])
         tile = metadata["discarded_tile"]
@@ -53,13 +55,17 @@ with tempfile.TemporaryDirectory(prefix="cj4dr-standard-") as directory:
         if metadata["actual_ron"]:
             positive.append(row)
             assert tile >= 0 and row["target"][tile // 4] == 255
+            assert row["target"].count(255) == 1
             assert metadata["winner_mask"] != 0
             assert not metadata["winner_mask"] & (1 << metadata["player"])
         else:
             ordinary.append(row)
+            assert 255 not in row["target"]
             assert metadata["winner_mask"] == 0
     assert positive and ordinary
-    assert any(0 in [v for v, m in zip(row["target"], row["mask"]) if m] for row in positive)
+    assert any(0 < v < 255 for row in ordinary for v, m in zip(row["target"], row["mask"]) if m)
+    assert rows[0]["group"] == "standard-v1/seed-82000/game-0"
+    assert {v for v, m in zip(rows[0]["target"], rows[0]["mask"]) if m} == {64}
     # Same game's trace is independent of batch/shard numbering.
     repeat = run("repeat.jsonl", "--games", 1, "--start-game", 0, "--seed", 82000)
     assert repeat.read_bytes() == path.read_bytes()

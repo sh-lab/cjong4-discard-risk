@@ -42,9 +42,24 @@ def validate(data):
             raise ValueError(f"{key} must be Unicode [N]")
     if any(not group.strip() for group in data["group"]):
         raise ValueError("group must be a nonempty game/base-case ID")
-    for metadata in data["metadata"]:
-        if not isinstance(json.loads(metadata), dict):
+    for i, raw in enumerate(data["metadata"]):
+        metadata = json.loads(raw)
+        if not isinstance(metadata, dict):
             raise ValueError("metadata must encode a JSON object")
+        if metadata.get("teacher_policy") == "staged-v1":
+            selected = data["mask"][i].astype(bool)
+            target = data["target"][i]
+            if not np.isin(target[selected], [0, 16, 32, 64, 96, 128, 160, 192, 255]).all():
+                raise ValueError("invalid staged-v1 teacher value")
+            flag, tile = metadata.get("actual_ron"), metadata.get("discarded_tile")
+            if type(flag) is not bool or type(tile) is not int or not -1 <= tile < 136:
+                raise ValueError("staged-v1 requires actual_ron and discarded_tile")
+            ff = np.flatnonzero(selected & (target == 255))
+            if flag:
+                if tile < 0 or ff.tolist() != [tile // 4]:
+                    raise ValueError("staged-v1 FF must label only the actual ron tile")
+            elif len(ff):
+                raise ValueError("staged-v1 cannot assign FF without actual ron")
     return data
 
 
