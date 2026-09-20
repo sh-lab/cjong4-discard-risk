@@ -31,13 +31,15 @@
 
 ## Linuxでビルド
 
-`cjong4`・`cjong4-opponent`・`cjong4-discard-risk` を兄弟ディレクトリに置きます。
-`cjong4-opponent` も、この変更の「親から渡されたcjong4ターゲットを再利用する」
-CMake対応を含む版へ更新してください。standardの行動ロジックは変更していません。
+`cjong4-workspace` 内の `cjong4`・`cjong4-opponent`・`cjong4-discard-risk` を使います。
+ソースから組み込む場合は、親のcjong4ターゲットを再利用できる `cjong4-opponent` 1.0.5以降が必要です。
+workspaceに登録された1.0.5は対応済みで、opponent側の追加変更は不要です。
 
 ```sh
-cd ~/Project/cjong4-discard-risk
+cd ~/Project/cjong4-workspace/cjong4-discard-risk
+python3 -m venv .venv
 source .venv/bin/activate
+python -m pip install -r training/requirements.txt
 
 cmake -S . -B build \
   -DCJONG4_SOURCE_DIR=../cjong4 \
